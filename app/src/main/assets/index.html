@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CamStream</title>
+<style>
+  html,body{margin:0;height:100%;background:#111;color:#eee;font-family:system-ui,sans-serif}
+  #wrap{display:flex;flex-direction:column;height:100%}
+  #view{flex:1;display:flex;justify-content:center;align-items:center;min-height:0;background:#000}
+  #box{position:relative;line-height:0;max-width:100%;max-height:100%}
+  #v{max-width:100%;max-height:100%;object-fit:contain;cursor:crosshair}
+  #ring{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border:2px solid #4cf;border-radius:50%;
+        pointer-events:none;display:none}
+  #bar{display:flex;gap:10px;align-items:center;padding:10px 16px;background:#1d1d1d;flex-wrap:wrap}
+  #z{flex:1;min-width:140px}
+  button{background:#333;color:#eee;border:0;border-radius:6px;padding:8px 14px;font-size:16px;cursor:pointer}
+  button:hover{background:#444}
+  #lbl{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
+  #st{font-size:14px;color:#9c9;min-width:120px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="view"><div id="box"><img id="v" alt="video"><div id="ring"></div></div></div>
+  <div id="bar">
+    <button id="minus">−</button>
+    <input id="z" type="range" min="1" max="1" step="0.1" value="1">
+    <button id="plus">+</button>
+    <span id="lbl">1.0×</span>
+    <button id="af" title="Повернути автофокус">Авто AF</button>
+    <button id="snap" title="Поточний кадр відео">📷 Кадр</button>
+    <button id="photo" title="Фото в максимальній роздільності">📸 Фото MAX</button>
+    <button id="fs">⛶</button>
+    <span id="st">Клік по зображенню — фокус</span>
+  </div>
+</div>
+<script>
+const v = document.getElementById('v'), z = document.getElementById('z'),
+      lbl = document.getElementById('lbl'), st = document.getElementById('st'),
+      ring = document.getElementById('ring');
+let min = 1, max = 1, timer = null;
+
+function startStream(){ v.src = '/stream?t=' + Date.now(); }
+v.onerror = () => setTimeout(startStream, 2000);
+startStream();
+
+function show(r){ z.value = r; lbl.textContent = Number(r).toFixed(1) + '×'; }
+function sendZoom(r){
+  r = Math.min(max, Math.max(min, r));
+  show(r);
+  clearTimeout(timer);
+  timer = setTimeout(() => fetch('/api/zoom?ratio=' + r).catch(() => {}), 40);
+}
+async function loadInfo(){
+  try{
+    const i = await (await fetch('/api/info')).json();
+    min = i.min; max = i.max; z.min = min; z.max = max;
+    if (document.activeElement !== z) show(i.cur);
+  }catch(e){}
+}
+loadInfo(); setInterval(loadInfo, 3000);
+
+z.oninput = () => sendZoom(parseFloat(z.value));
+document.getElementById('plus').onclick  = () => sendZoom(parseFloat(z.value) * 1.25);
+document.getElementById('minus').onclick = () => sendZoom(parseFloat(z.value) / 1.25);
+document.getElementById('view').addEventListener('wheel', e => {
+  e.preventDefault();
+  sendZoom(parseFloat(z.value) * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+}, {passive:false});
+
+// Фокус по кліку
+v.addEventListener('click', e => {
+  const r = v.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+  ring.style.left = (e.clientX - r.left) + 'px'; ring.style.top = (e.clientY - r.top) + 'px';
+  ring.style.display = 'block'; setTimeout(() => ring.style.display = 'none', 1200);
+  fetch('/api/focus?x=' + x.toFixed(4) + '&y=' + y.toFixed(4)).catch(() => {});
+  st.textContent = 'Фокус зафіксовано';
+});
+document.getElementById('af').onclick = () => {
+  fetch('/api/autofocus').catch(() => {}); st.textContent = 'Автофокус увімкнено';
+};
+
+async function download(url, name, busy){
+  st.textContent = busy;
+  try{
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    const b = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = name + '_' + Date.now() + '.jpg'; a.click();
+    st.textContent = 'Збережено (' + (b.size / 1e6).toFixed(1) + ' МБ)';
+  }catch(e){ st.textContent = 'Помилка: ' + e.message; }
+}
+document.getElementById('snap').onclick  = () => download('/snapshot', 'frame', 'Зберігаю кадр…');
+document.getElementById('photo').onclick = () => download('/photo', 'photo', 'Знімаю фото, зачекайте…');
+
+document.getElementById('fs').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.getElementById('view').requestFullscreen();
+};
+</script>
+</body>
+</html>
